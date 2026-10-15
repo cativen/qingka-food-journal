@@ -68,7 +68,7 @@ async function syncInbox(){
     const paths:string[]=[];
     for(const dataUrl of (Array.isArray(item.photos)?item.photos:[])){
      if(typeof dataUrl!=='string')throw Error('照片内容格式不正确');
-     const match=dataUrl.match(/^data:(image\\/(?:jpeg|png|webp));base64,(.+)$/);
+     const match=dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
      if(!match)throw Error('照片需要是 JPEG、PNG 或 WebP');
      const raw=atob(match[2]);
      if(raw.length>8*1024*1024)throw Error('照片超过 8MB');
