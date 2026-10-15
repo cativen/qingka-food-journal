@@ -1,0 +1,1 @@
+import type { Metadata } from 'next'; import './style.css'; export const metadata:Metadata={title:'轻卡 · 个人饮食日记',description:'私人热量、照片与体重记录'}; export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="zh-CN"><body>{children}</body></html>}
