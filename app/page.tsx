@@ -56,25 +56,36 @@ async function syncInbox(){
   if(queue.error)throw queue.error;
   let count=0;
   for(const item of queue.data||[]){
-   const done=await supa.from('food_entries').select('id').eq('incoming_id',item.id).eq('user_id',user.id).maybeSingle();
-   if(done.error)throw done.error;
-   if(!done.data){
+   const already=await supa.from('food_entries').select('id,photo_paths').eq('incoming_id',item.id).eq('user_id',user.id).maybeSingle();
+   if(already.error)throw already.error;
+   let target=already.data;
+   if(!target && item.source_key?.startsWith('qingka-photo-attach-')){
+     const match=await supa.from('food_entries').select('id,photo_paths').eq('user_id',user.id).eq('entry_date',item.entry_date).eq('meal',item.meal).eq('calories',item.calories).order('created_at',{ascending:true}).limit(1).maybeSingle();
+     if(match.error)throw match.error;
+     target=match.data;
+   }
+   if(!already.data){
     const paths:string[]=[];
     for(const dataUrl of (Array.isArray(item.photos)?item.photos:[])){
      if(typeof dataUrl!=='string')throw Error('照片内容格式不正确');
-     const match=dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
+     const match=dataUrl.match(/^data:(image\\/(?:jpeg|png|webp));base64,(.+)$/);
      if(!match)throw Error('照片需要是 JPEG、PNG 或 WebP');
      const raw=atob(match[2]);
      if(raw.length>8*1024*1024)throw Error('照片超过 8MB');
      const bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));
      const ext=match[1].split('/')[1].replace('jpeg','jpg');
-     const path=user.id+'/'+item.id+'/'+crypto.randomUUID()+'.'+ext;
+     const path=user.id+'/'+(target?.id||item.id)+'/'+crypto.randomUUID()+'.'+ext;
      const up=await supa.storage.from('meal-photos').upload(path,bytes,{contentType:match[1]});
      if(up.error)throw up.error;
      paths.push(path);
     }
-    const saved=await supa.from('food_entries').insert({user_id:user.id,incoming_id:item.id,entry_date:item.entry_date,meal:item.meal,calories:item.calories,note:item.note,photo_paths:paths});
-    if(saved.error && saved.error.code!=='23505')throw saved.error;
+    if(target){
+     const updated=await supa.from('food_entries').update({photo_paths:[...(target.photo_paths||[]),...paths]}).eq('id',target.id).eq('user_id',user.id);
+     if(updated.error)throw updated.error;
+    }else{
+     const saved=await supa.from('food_entries').insert({user_id:user.id,incoming_id:item.id,entry_date:item.entry_date,meal:item.meal,calories:item.calories,note:item.note,photo_paths:paths});
+     if(saved.error && saved.error.code!=='23505')throw saved.error;
+    }
    }
    const deleted=await supa.from('chat_sync_inbox').delete().eq('id',item.id);
    if(deleted.error)throw deleted.error;
