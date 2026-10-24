@@ -5,10 +5,27 @@ import {compressPhotoToTenPercent} from '../lib/photo-compression';
 type Entry={id:string,user_id:string,entry_date:string,meal:string,calories:number,note:string|null,photo_paths:string[]|null,created_at:string};
 const url=process.env.NEXT_PUBLIC_SUPABASE_URL||'';const anon=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||'';
 const supa:SupabaseClient|null=url&&anon?createClient(url,anon,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}}):null;
+const OWNER_EMAIL='cativenll@gmail.com';
+const OWNER_USER_ID='1db152f5-37b0-4430-8cd9-7078812bfdf7';
+const isAuthorized=(candidate:User|null|undefined):candidate is User=>Boolean(candidate&&candidate.id===OWNER_USER_ID&&candidate.email?.toLowerCase()===OWNER_EMAIL&&candidate.email_confirmed_at);
 const today=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')};
 export default function Home(){
-const [user,setUser]=useState<User|null>(null),[loaded,setLoaded]=useState(false),[rows,setRows]=useState<Entry[]>([]),[photos,setPhotos]=useState<Record<string,string>>({}),[filter,setFilter]=useState(today()),[mealFilter,setMealFilter]=useState(''),[date,setDate]=useState(today()),[meal,setMeal]=useState('早餐'),[cal,setCal]=useState(''),[note,setNote]=useState(''),[images,setImages]=useState<File[]>([]),[weight,setWeight]=useState('69'),[weightDate,setWeightDate]=useState(today()),[weights,setWeights]=useState<{entry_date:string,weight_kg:number}[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-useEffect(()=>{if(!supa){setLoaded(true);return}const s=supa;s.auth.getUser().then(({data})=>{setUser(data.user);setLoaded(true)});const {data:{subscription}}=s.auth.onAuthStateChange((_e,session)=>setUser(session?.user||null));return()=>subscription.unsubscribe()},[]);
+const [user,setUser]=useState<User|null>(null),[accessDenied,setAccessDenied]=useState(false),[loaded,setLoaded]=useState(false),[rows,setRows]=useState<Entry[]>([]),[photos,setPhotos]=useState<Record<string,string>>({}),[filter,setFilter]=useState(today()),[mealFilter,setMealFilter]=useState(''),[date,setDate]=useState(today()),[meal,setMeal]=useState('早餐'),[cal,setCal]=useState(''),[note,setNote]=useState(''),[images,setImages]=useState<File[]>([]),[weight,setWeight]=useState('69'),[weightDate,setWeightDate]=useState(today()),[weights,setWeights]=useState<{entry_date:string,weight_kg:number}[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+useEffect(()=>{
+ if(!supa){setLoaded(true);return}
+ const s=supa;let active=true;
+ const applyUser=(candidate:User|null|undefined)=>{
+  if(!active)return;
+  const authorized=isAuthorized(candidate);
+  setUser(authorized?candidate!:null);
+  setAccessDenied(Boolean(candidate&&!authorized));
+  if(!authorized){setRows([]);setPhotos({})}
+ };
+ s.auth.getUser().then(({data})=>{applyUser(data.user);if(active)setLoaded(true)})
+  .catch(()=>{applyUser(null);if(active)setLoaded(true)});
+ const {data:{subscription}}=s.auth.onAuthStateChange((_event,session)=>applyUser(session?.user));
+ return()=>{active=false;subscription.unsubscribe()}
+},[]);
 async function refresh(){if(!supa||!user)return;const [r,w]=await Promise.all([supa.from('food_entries').select('*').eq('user_id',user.id).order('entry_date',{ascending:false}).order('created_at',{ascending:false}),supa.from('weight_entries').select('entry_date,weight_kg').eq('user_id',user.id).order('entry_date',{ascending:false})]);if(r.error)setError(r.error.message);else setRows(r.data||[]);if(!w.error)setWeights(w.data||[])}
 useEffect(()=>{refresh()},[user?.id]);
 useEffect(()=>{if(!supa)return;const paths=[...new Set(rows.flatMap(r=>r.photo_paths||[]))].filter(p=>!photos[p]);if(!paths.length)return;const s=supa;s.storage.from('meal-photos').createSignedUrls(paths,3600).then(({data})=>{if(data)setPhotos(old=>({...old,...Object.fromEntries(data.filter(x=>x.signedUrl).map(x=>[x.path!,x.signedUrl!]))}))})},[rows]);
@@ -107,6 +124,7 @@ useEffect(()=>{if(user?.id)void syncInbox()},[user?.id]);
 useEffect(()=>{if(!user)return;const onFocus=()=>void syncInbox();window.addEventListener('focus',onFocus);return()=>window.removeEventListener('focus',onFocus)},[user?.id,syncBusy]);
 if(!loaded)return <main>正在加载…</main>;
 if(!supa)return <main className="card login"><h1>轻卡 · 配置待完成</h1><p>请在 Vercel 设置 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_ANON_KEY。</p></main>;
+if(accessDenied)return <main className="card login"><h1>无访问权限</h1><p className="muted">当前 Google 账号未被授权使用此私人网站。你无法查看或修改任何饮食、体重和照片数据。</p><button onClick={async()=>{await supa.auth.signOut();setAccessDenied(false)}}>退出当前账号</button></main>;
 if(!user)return <main className="card login"><div className="logo">轻<em>卡</em></div><h1>你的私人饮食日记</h1><p className="muted">用 Google 账号安全登录，随时查看每天的热量、照片和体重。</p><button onClick={async()=>{const {error}=await supa.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin}});if(error)setError(error.message)}}>使用 Google 登录</button>{error&&<p className="error">{error}</p>}</main>;
 return <main><header className="top"><div><div className="logo">轻<em>卡</em> · Food Journal</div><div className="muted">{user.email}</div></div><button className="ghost" onClick={()=>supa.auth.signOut()}>退出登录</button></header>
 {!rows.some(r=>r.entry_date==='2026-10-15' && r.meal==='早餐' && Number(r.calories)===250)||!rows.some(r=>r.entry_date==='2026-10-15' && r.meal==='午餐' && Number(r.calories)===590)?<section className="card" style={{borderColor:'#a9dacc',background:'#effaf4'}}><div className="between"><div><strong>导入已有饮食数据</strong><p className="muted">2026-10-15 · 早餐 250 kcal，午餐约 590 kcal（合计 840 kcal）</p></div><button disabled={busy} onClick={importExisting}>{busy?'导入中…':'一键导入'}</button></div><p className="note">不会重复导入已存在的同餐次同热量记录；照片需要另外补传。</p></section>:null}
